@@ -92,7 +92,8 @@ MODE_NORMAL = "381b4222-f694-41f0-9685-ff5bb260df2e"
 
 SERVICES = [("噜妹日记", 8765), ("噜妹影库", 8977)]
 
-CONF = os.path.join(os.environ.get("APPDATA", "."), "lulu-widget.json")
+CONF = os.path.join(os.environ.get("APPDATA", "."), "lulu-watch.json")
+CONF_LEGACY = os.path.join(os.environ.get("APPDATA", "."), "lulu-widget.json")
 NO_WINDOW = 0x08000000
 
 
@@ -441,12 +442,14 @@ class Widget:
 
     # ---------- 配置 / 位置 ----------
     def _load_conf(self):
-        try:
-            if os.path.exists(CONF):
-                with open(CONF, "r", encoding="utf-8") as f:
-                    return json.load(f) or {}
-        except Exception:
-            pass
+        # 改名前的配置（lulu-widget.json）照样认，位置和置顶不用重新设一遍
+        for path in (CONF, CONF_LEGACY):
+            try:
+                if os.path.exists(path):
+                    with open(path, "r", encoding="utf-8") as f:
+                        return json.load(f) or {}
+            except Exception:
+                pass
         return {}
 
     def _save_conf(self):
@@ -660,7 +663,7 @@ class Widget:
                 Menu.SEPARATOR,
                 MenuItem("退出", lambda icon, item: self._post(self.quit)),
             )
-            self.tray = pystray.Icon("lulu-widget",
+            self.tray = pystray.Icon("lulu-watch",
                                      tray_image(self.data.get("svc")),
                                      "噜妹 · 状态", menu)
             self.tray.run_detached()
