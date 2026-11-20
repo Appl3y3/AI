@@ -22,6 +22,13 @@ import tkinter as tk
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
+try:
+    import pystray
+    from pystray import Menu, MenuItem
+    HAS_TRAY = True
+except Exception:       # 托盘库缺失时挂件照常能用，只是没有右下角图标
+    HAS_TRAY = False
+
 
 # ==================== DPI ====================
 def _enable_dpi_awareness():
@@ -172,6 +179,24 @@ def active_scheme():
         return str(val).strip().lower()
     except Exception:
         return ""
+
+
+# ==================== 托盘图标 ====================
+def tray_image(svc=None):
+    """64x64：深色圆角底 + 两条状态色条（上=日记，下=影库），缩小到 16px 也能看清死活"""
+    S = 64
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([2, 2, S - 3, S - 3], radius=14,
+                        fill=(22, 27, 38, 255), outline=(80, 94, 122, 255), width=2)
+    states = [bool(s.get("up")) for s in (svc or [])][:2]
+    while len(states) < 2:
+        states.append(False)
+    for i, up in enumerate(states):
+        c = (61, 220, 151, 255) if up else (255, 92, 108, 255)
+        y = 17 + i * 15
+        d.rounded_rectangle([14, y, 50, y + 10], radius=5, fill=c)
+    return img
 
 
 # ==================== 背景层（按 k 缓存）====================
@@ -365,7 +390,13 @@ class Widget:
     def __init__(self):
         self.root = tk.Tk()
         self.root.overrideredirect(True)
-        self.root.attributes("-topmost", True)
+
+        # 默认不置顶：置顶会一直挡在其他窗口前面，碍事。
+        # 需要时可右键菜单勾选「始终置顶」，状态存进配置。
+        self.conf = self._load_conf()
+        self.topmost = bool(self.conf.get("topmost", False))
+        self.root.attributes("-topmost", self.topmost)
+
         self.root.configure(bg=KEY)
         try:
             self.root.attributes("-transparentcolor", KEY)
@@ -391,8 +422,13 @@ class Widget:
         self._drag = None
         self._moved = False
         self._hover = None
+        self.top_var = tk.BooleanVar(value=self.topmost)
+        self.tray = None
+        self._vis = True
+        self._tray_sig = None
 
         self.queue = queue.Queue()
+        self.cmdq = queue.Queue()       # 托盘线程 -> 主线程的动作队列
         self.sampler = Sampler(self.queue)
         self.sampler.start()
 
@@ -400,18 +436,31 @@ class Widget:
         self._bind()
         self._draw()
         self.root.after(150, self._poll)
-        self.root.after(300, self._keep_top)
+        self.root.after(300, self._enforce_top)
+        self.root.after(500, self._start_tray)
 
-    # ---------- 位置 ----------
-    def _load_pos(self):
-        x = y = None
+    # ---------- 配置 / 位置 ----------
+    def _load_conf(self):
         try:
             if os.path.exists(CONF):
                 with open(CONF, "r", encoding="utf-8") as f:
-                    c = json.load(f)
-                x, y = c.get("x"), c.get("y")
+                    return json.load(f) or {}
         except Exception:
             pass
+        return {}
+
+    def _save_conf(self):
+        try:
+            self.conf["x"] = self.root.winfo_x()
+            self.conf["y"] = self.root.winfo_y()
+            self.conf["topmost"] = self.topmost
+            with open(CONF, "w", encoding="utf-8") as f:
+                json.dump(self.conf, f)
+        except Exception:
+            pass
+
+    def _load_pos(self):
+        x, y = self.conf.get("x"), self.conf.get("y")
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         pad = int(round(PAD_EDGE * SCALE))
         if x is None:
@@ -419,13 +468,6 @@ class Widget:
         x = max(0, min(x, sw - self.pw))
         y = max(0, min(y, sh - self.ph))
         self.root.geometry(f"{self.pw}x{self.ph}+{x}+{y}")
-
-    def _save_pos(self):
-        try:
-            with open(CONF, "w", encoding="utf-8") as f:
-                json.dump({"x": self.root.winfo_x(), "y": self.root.winfo_y()}, f)
-        except Exception:
-            pass
 
     # ---------- 事件 ----------
     def _bind(self):
@@ -470,7 +512,7 @@ class Widget:
 
     def _on_release(self, e):
         if self._moved:
-            self._save_pos()
+            self._save_conf()
             return
         guid = self._hit(e)
         if guid:
@@ -478,8 +520,11 @@ class Widget:
 
     def _on_menu(self, e):
         m = tk.Menu(self.root, tearoff=0)
+        m.add_checkbutton(label="始终置顶", variable=self.top_var,
+                          command=self._toggle_top)
         m.add_command(label="立即刷新", command=self._refresh)
         m.add_command(label="居中显示", command=self._center)
+        m.add_command(label="隐藏到托盘", command=self._toggle_vis)
         m.add_separator()
         m.add_command(label="退出挂件", command=self.quit)
         try:
@@ -490,7 +535,7 @@ class Widget:
     def _center(self):
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         self.root.geometry(f"+{(sw - self.pw) // 2}+{(sh - self.ph) // 2}")
-        self._save_pos()
+        self._save_conf()
 
     def _refresh(self):
         self.data["scheme"] = active_scheme()
@@ -526,23 +571,147 @@ class Widget:
                 got = True
             except queue.Empty:
                 break
+        while True:                      # 托盘线程投递的动作，在主线程执行
+            try:
+                fn = self.cmdq.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                fn()
+            except Exception:
+                pass
         if got:
             self._draw()
-        self.root.after(150, self._poll)
-
-    def _keep_top(self):
-        """其他程序也有置顶窗时，tk 的 topmost 会失效，这里用系统级强制"""
+            self._sync_tray()
         try:
-            hwnd = self.root.winfo_id()
-            parent = ctypes.windll.user32.GetParent(hwnd)
-            if parent:
-                hwnd = parent
-            ctypes.windll.user32.SetWindowPos(
-                ctypes.c_void_p(hwnd), ctypes.c_void_p(-1), 0, 0, 0, 0,
-                0x0001 | 0x0002 | 0x0010)
+            self.root.after(150, self._poll)
         except Exception:
             pass
-        self.root.after(2500, self._keep_top)
+
+    # ---------- 层级 ----------
+    def _hwnd(self):
+        hwnd = self.root.winfo_id()
+        parent = ctypes.windll.user32.GetParent(hwnd)
+        return ctypes.c_void_p(parent or hwnd)
+
+    def _enforce_top(self):
+        """仅在「始终置顶」开启时才声明置顶：其他程序的置顶窗会压过 tk 的
+        -topmost 属性，所以隔一段时间用系统级调用重申一次。关闭时什么都不做。"""
+        if self.topmost:
+            try:
+                ctypes.windll.user32.SetWindowPos(
+                    self._hwnd(), ctypes.c_void_p(-1), 0, 0, 0, 0,
+                    0x0001 | 0x0002 | 0x0010)
+            except Exception:
+                pass
+        self.root.after(2500, self._enforce_top)
+
+    def _toggle_top(self):
+        self.topmost = bool(self.top_var.get())
+        try:
+            self.root.attributes("-topmost", self.topmost)
+        except Exception:
+            pass
+        if self.topmost:
+            self._bring_front()
+        self._save_conf()
+
+    def _bring_front(self):
+        """把窗口抬到最前一次。非置顶状态下先临时上顶再退出置顶层，
+        这样它会盖住当前所有普通窗口，但之后仍会被新窗口正常覆盖。"""
+        try:
+            u = ctypes.windll.user32
+            h = self._hwnd()
+            u.SetWindowPos(h, ctypes.c_void_p(-1), 0, 0, 0, 0,
+                           0x0001 | 0x0002 | 0x0010)
+            if not self.topmost:
+                u.SetWindowPos(h, ctypes.c_void_p(-2), 0, 0, 0, 0,
+                               0x0001 | 0x0002 | 0x0010)
+            u.SetForegroundWindow(h)
+        except Exception:
+            pass
+
+    # ---------- 托盘 ----------
+    def _post(self, fn):
+        """托盘回调跑在 pystray 线程，tk 不是线程安全的，
+        所以只把动作塞进队列，交给主线程的 _poll 执行"""
+        try:
+            self.cmdq.put(fn)
+        except Exception:
+            pass
+
+    def _start_tray(self):
+        """右下角托盘图标：无边框窗口不在任务栏显示，靠它唤出/隐藏/退出"""
+        if not HAS_TRAY:
+            return
+        try:
+            menu = Menu(
+                MenuItem(lambda item: "隐藏挂件" if self._vis else "显示挂件",
+                         self._on_tray_vis, default=True),
+                MenuItem(lambda item: self._svc_line(0), None, enabled=False),
+                MenuItem(lambda item: self._svc_line(1), None, enabled=False),
+                Menu.SEPARATOR,
+                MenuItem("始终置顶", self._on_tray_top,
+                         checked=lambda item: self.topmost),
+                MenuItem("切换到 挂机", lambda icon, item: self._post(
+                    lambda: self._switch(MODE_IDLE))),
+                MenuItem("切换到 恢复", lambda icon, item: self._post(
+                    lambda: self._switch(MODE_NORMAL))),
+                Menu.SEPARATOR,
+                MenuItem("退出", lambda icon, item: self._post(self.quit)),
+            )
+            self.tray = pystray.Icon("lulu-widget",
+                                     tray_image(self.data.get("svc")),
+                                     "噜妹 · 状态", menu)
+            self.tray.run_detached()
+        except Exception:
+            self.tray = None
+            try:
+                import traceback
+                with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       "tray-error.log"), "w", encoding="utf-8") as f:
+                    f.write(traceback.format_exc())
+            except Exception:
+                pass
+
+    def _svc_line(self, i):
+        svc = self.data.get("svc") or []
+        if i < len(svc):
+            s = svc[i]
+            return "%s  %s" % (s["name"], "运行中" if s.get("up") else "未响应")
+        return "—"
+
+    def _on_tray_vis(self, icon=None, item=None):
+        self._post(self._toggle_vis)
+
+    def _on_tray_top(self, icon=None, item=None):
+        self._post(self._toggle_top_from_tray)
+
+    def _toggle_top_from_tray(self):
+        self.top_var.set(not self.topmost)
+        self._toggle_top()
+
+    def _toggle_vis(self):
+        if self._vis:
+            self.root.withdraw()
+            self._vis = False
+        else:
+            self.root.deiconify()
+            self._vis = True
+            self._bring_front()
+
+    def _sync_tray(self):
+        """服务状态一变，就把托盘图标的两条色条换个颜色"""
+        if not self.tray:
+            return
+        sig = tuple(bool(s.get("up")) for s in (self.data.get("svc") or []))
+        if sig == self._tray_sig:
+            return
+        self._tray_sig = sig
+        try:
+            self.tray.icon = tray_image(self.data.get("svc"))
+        except Exception:
+            pass
 
     def _draw(self):
         img, buttons = build_image(self.data, self._hover)
@@ -554,6 +723,12 @@ class Widget:
 
     def quit(self):
         self.sampler.stop_flag = True
+        if self.tray:
+            try:
+                self.tray.stop()
+            except Exception:
+                pass
+            self.tray = None
         try:
             self.root.destroy()
         except Exception:
