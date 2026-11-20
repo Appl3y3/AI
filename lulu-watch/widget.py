@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-噜妹状态挂件 —— 桌面小贴纸
-显示：电源模式 / 噜妹日记 / 噜妹影库 运行状态 / CPU / 内存
+噜噜监控 —— 桌面小贴纸
+显示：电源模式 / Caddy 入口 / 噜妹日记 / 噜妹影库 运行状态 / CPU / 内存
 可点按钮在「挂机」「恢复」之间切换
 
 用法：
@@ -59,6 +59,7 @@ SCALE = _system_scale()
 
 
 # ==================== 外观常量（逻辑坐标，渲染时乘 SCALE）====================
+TITLE = "噜噜监控"
 W, H = 272, 328
 RADIUS = 18
 SS = 3                       # 圆角超采样倍数
@@ -282,7 +283,7 @@ def build_image(data, hover=None, k=None):
     px = lambda v: P(v)          # noqa: E731
 
     # ---------- 标题 ----------
-    d.text((px(18), px(26)), "噜妹 · 状态", font=F["title"], fill=CLR["fg"],
+    d.text((px(18), px(26)), TITLE, font=F["title"], fill=CLR["fg"],
            anchor="lm")
 
     scheme = (data.get("scheme") or "").lower()
@@ -456,6 +457,7 @@ class Sampler(threading.Thread):
 class Widget:
     def __init__(self):
         self.root = tk.Tk()
+        self.root.title(TITLE)
         self.root.overrideredirect(True)
 
         # 默认不置顶：置顶会一直挡在其他窗口前面，碍事。
@@ -734,7 +736,7 @@ class Widget:
             self.tray = pystray.Icon("lulu-watch",
                                      tray_image(self.data.get("svc"),
                                                 self._caddy_up()),
-                                     "噜妹 · 状态", menu)
+                                     TITLE, menu)
             self.tray.run_detached()
         except Exception:
             self.tray = None
