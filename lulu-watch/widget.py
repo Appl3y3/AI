@@ -59,7 +59,7 @@ SCALE = _system_scale()
 
 
 # ==================== 外观常量（逻辑坐标，渲染时乘 SCALE）====================
-W, H = 272, 286
+W, H = 272, 328
 RADIUS = 18
 SS = 3                       # 圆角超采样倍数
 KEY = "#ff00ff"              # 透明键色
@@ -91,6 +91,11 @@ MODE_IDLE = "79d386e3-3601-482d-aeb4-cc38e16c3d8f"
 MODE_NORMAL = "381b4222-f694-41f0-9685-ff5bb260df2e"
 
 SERVICES = [("噜妹日记", 8765), ("噜妹影库", 8977)]
+
+# Caddy 是这两个服务共用的入口：8444 -> 日记、8445 -> 影库。
+# 它挂了两个服务会同时失联，而本机两个端口还都通，所以单独一行。
+CADDY_PORTS = [8444, 8445]
+CADDY_NAME = "Caddy 反代"
 
 CONF = os.path.join(os.environ.get("APPDATA", "."), "lulu-watch.json")
 CONF_LEGACY = os.path.join(os.environ.get("APPDATA", "."), "lulu-widget.json")
@@ -169,6 +174,20 @@ def probe_port(port, timeout=0.35):
         return False, None
 
 
+def probe_caddy(ports=None, timeout=0.35):
+    """Caddy 一个进程挂多个站点，所以数「几个端口在听」而不是看单点。
+    返回 (活着的端口列表, 最快一次握手耗时)。"""
+    ports = ports or CADDY_PORTS
+    live, best = [], None
+    for p in ports:
+        up, ms = probe_port(p, timeout)
+        if up:
+            live.append(p)
+            if ms is not None and (best is None or ms < best):
+                best = ms
+    return live, best
+
+
 def active_scheme():
     try:
         import winreg
@@ -183,20 +202,28 @@ def active_scheme():
 
 
 # ==================== 托盘图标 ====================
-def tray_image(svc=None):
-    """64x64：深色圆角底 + 两条状态色条（上=日记，下=影库），缩小到 16px 也能看清死活"""
+def tray_image(svc=None, caddy=None):
+    """64x64：深色圆角底 + 三条状态色条（上=Caddy，中=日记，下=影库），
+    缩小到 16px 也能看清死活。Caddy 那条画得短一点、两端带缺口，
+    一眼能和下面两条服务条区分开。"""
     S = 64
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([2, 2, S - 3, S - 3], radius=14,
                         fill=(22, 27, 38, 255), outline=(80, 94, 122, 255), width=2)
-    states = [bool(s.get("up")) for s in (svc or [])][:2]
-    while len(states) < 2:
-        states.append(False)
-    for i, up in enumerate(states):
+    bars = []
+    if caddy is not None:
+        bars.append(bool(caddy))
+    bars += [bool(s.get("up")) for s in (svc or [])][:2]
+    # 不跑 Caddy 时（caddy=None）只画两条服务条，不要多出一条假的红条
+    need = 3 if caddy is not None else 2
+    while len(bars) < need:
+        bars.append(False)
+    for i, up in enumerate(bars):
         c = (61, 220, 151, 255) if up else (255, 92, 108, 255)
-        y = 17 + i * 15
-        d.rounded_rectangle([14, y, 50, y + 10], radius=5, fill=c)
+        y = 13 + i * 13
+        x1, x2 = (18, 46) if i == 0 else (14, 50)
+        d.rounded_rectangle([x1, y, x2, y + 8], radius=4, fill=c)
     return img
 
 
@@ -272,8 +299,39 @@ def build_image(data, hover=None, k=None):
     lw = max(1, P(1))
     d.line([(px(18), px(48)), (pw - px(18), px(48))], fill=CLR["divider"], width=lw)
 
+    # ---------- Caddy 入口（菱形点，和下面两个圆形服务点区分） ----------
+    cad = data.get("caddy") or {}
+    live = cad.get("live") or []
+    cst = cad.get("state") or "down"
+    ccol = {"ok": CLR["ok"], "warn": CLR["warn"]}.get(cst, CLR["bad"])
+    cword = {"ok": "运行中", "warn": "部分", }.get(cst, "未运行")
+
+    ccy, csy = 68, 86
+    # 菱形：以 (24, ccy) 为中心，外圈淡色底 + 内圈实色
+    def diamond(cx, cy, r, fill):
+        d.polygon([(px(cx), px(cy - r)), (px(cx + r), px(cy)),
+                   (px(cx), px(cy + r)), (px(cx - r), px(cy))], fill=fill)
+    diamond(24, ccy, 7.5, _tint(ccol, CLR["bg_top"], 0.22))
+    diamond(24, ccy, 4.6, ccol)
+    d.text((px(38), px(ccy)), CADDY_NAME, font=F["name"], fill=CLR["fg"],
+           anchor="lm")
+    d.text((pw - px(18), px(ccy)), cword, font=F["status"], fill=ccol,
+           anchor="rm")
+    if live:
+        sub = " · ".join(str(p) for p in live)
+        if cad.get("ms") is not None:
+            sub += f"    {cad['ms']:.1f}ms"
+    else:
+        sub = " / ".join(str(p) for p in CADDY_PORTS) + " 都没在听" if CADDY_PORTS else "没配端口"
+    d.text((px(38), px(csy)), sub, font=F["sub"], fill=CLR["fg_faint"],
+           anchor="lm")
+
+    # 入口与后端之间用更淡的分隔，暗示「这两条服务挂在它后面」
+    d.line([(px(24), px(100)), (pw - px(18), px(100))],
+           fill=CLR["divider"], width=lw)
+
     # ---------- 服务状态 ----------
-    rows = [(66, 86), (108, 128)]
+    rows = [(116, 134), (156, 174)]
     for i, s in enumerate(data.get("svc", [])[:2]):
         cy, sy = rows[i]
         up = s.get("up")
@@ -291,7 +349,7 @@ def build_image(data, hover=None, k=None):
         d.text((px(38), px(sy)), sub, font=F["sub"], fill=CLR["fg_faint"],
                anchor="lm")
 
-    d.line([(px(18), px(148)), (pw - px(18), px(148))],
+    d.line([(px(18), px(192)), (pw - px(18), px(192))],
            fill=CLR["divider"], width=lw)
 
     # ---------- CPU / 内存 ----------
@@ -318,16 +376,16 @@ def build_image(data, hover=None, k=None):
         cpu_hint = f"{_cf.current / 1000:.1f}GHz" if _cf and _cf.current else ""
     except Exception:
         cpu_hint = ""
-    gauge(162, 172, "CPU", float(data.get("cpu") or 0), cpu_hint)
+    gauge(206, 216, "CPU", float(data.get("cpu") or 0), cpu_hint)
     used = data.get("mem_used") or 0
     total = data.get("mem_total") or 0
-    gauge(192, 202, "内存", float(data.get("mem") or 0),
+    gauge(236, 246, "内存", float(data.get("mem") or 0),
           f"{used:.0f}/{total:.0f}G" if total else "")
 
     # ---------- 按钮 ----------
     buttons = {}
     bw = (W - 36 - 10) // 2
-    by1, by2 = 230, 268
+    by1, by2 = 272, 310
     specs = [(18, "挂机", MODE_IDLE, CLR["accent"]),
              (18 + bw + 10, "恢复", MODE_NORMAL, CLR["ok"])]
     for bx, text, guid, color in specs:
@@ -370,12 +428,20 @@ class Sampler(threading.Thread):
                 for name, port in SERVICES:
                     up, ms = probe_port(port)
                     svc.append({"name": name, "port": port, "up": up, "ms": ms})
+                live, cms = probe_caddy()
+                caddy = {
+                    "live": live,
+                    "ms": cms,
+                    "state": ("ok" if len(live) == len(CADDY_PORTS)
+                              else "warn" if live else "down"),
+                }
                 self.q.put({
                     "cpu": psutil.cpu_percent(interval=None),
                     "mem": vm.percent,
                     "mem_used": vm.used / (1024 ** 3),
                     "mem_total": vm.total / (1024 ** 3),
                     "svc": svc,
+                    "caddy": caddy,
                     "scheme": active_scheme(),
                 })
             except Exception:
@@ -417,6 +483,7 @@ class Widget:
             "cpu": 0.0, "mem": 0.0, "mem_used": 0, "mem_total": 0,
             "svc": [{"name": n, "port": p, "up": False, "ms": None}
                     for n, p in SERVICES],
+            "caddy": {"live": [], "ms": None, "state": "down"},
             "scheme": active_scheme(),
         }
         self.buttons = {}
@@ -651,6 +718,7 @@ class Widget:
             menu = Menu(
                 MenuItem(lambda item: "隐藏挂件" if self._vis else "显示挂件",
                          self._on_tray_vis, default=True),
+                MenuItem(lambda item: self._caddy_line(), None, enabled=False),
                 MenuItem(lambda item: self._svc_line(0), None, enabled=False),
                 MenuItem(lambda item: self._svc_line(1), None, enabled=False),
                 Menu.SEPARATOR,
@@ -664,7 +732,8 @@ class Widget:
                 MenuItem("退出", lambda icon, item: self._post(self.quit)),
             )
             self.tray = pystray.Icon("lulu-watch",
-                                     tray_image(self.data.get("svc")),
+                                     tray_image(self.data.get("svc"),
+                                                self._caddy_up()),
                                      "噜妹 · 状态", menu)
             self.tray.run_detached()
         except Exception:
@@ -676,6 +745,21 @@ class Widget:
                     f.write(traceback.format_exc())
             except Exception:
                 pass
+
+    def _caddy_up(self):
+        """托盘图标只要一个真假值：Caddy 两个站点都在才算活着"""
+        cad = self.data.get("caddy") or {}
+        return (cad.get("state") == "ok") if cad else None
+
+    def _caddy_line(self):
+        cad = self.data.get("caddy") or {}
+        if not cad:
+            return "%s  —" % CADDY_NAME
+        st = cad.get("state")
+        word = {"ok": "运行中", "warn": "部分", }.get(st, "未运行")
+        live = cad.get("live") or []
+        return "%s  %s（%s）" % (CADDY_NAME, word,
+                                "·".join(str(p) for p in live) or "无端口")
 
     def _svc_line(self, i):
         svc = self.data.get("svc") or []
@@ -704,15 +788,16 @@ class Widget:
             self._bring_front()
 
     def _sync_tray(self):
-        """服务状态一变，就把托盘图标的两条色条换个颜色"""
+        """状态一变就把托盘图标的色条换颜色：上=Caddy，中=日记，下=影库"""
         if not self.tray:
             return
-        sig = tuple(bool(s.get("up")) for s in (self.data.get("svc") or []))
+        sig = (self._caddy_up(),
+               tuple(bool(s.get("up")) for s in (self.data.get("svc") or [])))
         if sig == self._tray_sig:
             return
         self._tray_sig = sig
         try:
-            self.tray.icon = tray_image(self.data.get("svc"))
+            self.tray.icon = tray_image(self.data.get("svc"), self._caddy_up())
         except Exception:
             pass
 
@@ -748,6 +833,13 @@ def preview(k=2.0):
     for name, port in SERVICES:
         up, ms = probe_port(port)
         svc.append({"name": name, "port": port, "up": up, "ms": ms})
+    live, cms = probe_caddy()
+    caddy = {
+        "live": live,
+        "ms": cms,
+        "state": ("ok" if len(live) == len(CADDY_PORTS)
+                  else "warn" if live else "down"),
+    }
     vm = psutil.virtual_memory()
     data = {
         "cpu": psutil.cpu_percent(interval=0.3),
@@ -755,6 +847,7 @@ def preview(k=2.0):
         "mem_used": vm.used / (1024 ** 3),
         "mem_total": vm.total / (1024 ** 3),
         "svc": svc,
+        "caddy": caddy,
         "scheme": scheme,
     }
 
