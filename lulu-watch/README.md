@@ -38,6 +38,7 @@ lulu-watch/
 │   ├── 开黑模式.cmd        高性能
 │   └── rebuild-idle-scheme.ps1   新机器上重新生成自定义挂机方案，新 GUID 自动回填 widget.py
 ├── preview.png            预览图（浅色底）
+├── preview_dark.png       预览图（深色底）
 └── screenshot.png         实机截图
 ```
 
@@ -58,6 +59,8 @@ python  widget.py --preview  :: 只渲染预览图 preview.png / preview_dark.pn
 
 开机自启：把 `启动挂件.cmd` 的快捷方式放进
 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`
+
+窗口位置与「始终置顶」存在 `%APPDATA%\lulu-watch.json`。这个挂件早先叫 lulu-widget，改名后旧的 `%APPDATA%\lulu-widget.json` 仍会被读取一次，位置和置顶不用重设；下次拖动或改置顶时才写到新文件名。
 
 ## 换机器时需要改的地方
 
