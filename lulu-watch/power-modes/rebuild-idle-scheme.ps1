@@ -1,11 +1,11 @@
-﻿# 重建挂件用的自定义「挂机」电源方案。
+# 重建挂件用的自定义「挂机」电源方案。
 # 用法： powershell -ExecutionPolicy Bypass -File .\rebuild-idle-scheme.ps1
 # 可重复运行：方案已存在时只重新应用参数，不改名、不重复创建。
 # 新机器上执行后，若生成的新 GUID 与下面不同，脚本会自动回填 widget.py（并留 widget.py.bak）。
 
 $ErrorActionPreference = "Stop"
 
-$IdleGuid = "79d386e3-3601-482d-aeb4-cc38e16c3d8f"
+$IdleGuid = "22f98355-2f49-49ce-8a7f-c138149382ce"
 $BaseGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"   # 平衡
 $Here     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Widget   = Join-Path (Split-Path -Parent $Here) "widget.py"
@@ -50,7 +50,7 @@ if (Test-Scheme $IdleGuid) {
 }
 
 if ($isNew) {
-    powercfg /changename $guid "挂机模式（服务常驻·低功耗）" "CPU 5-60%、显示器 10 分钟关、不睡眠、硬盘常转"
+    powercfg /changename $guid "挂机模式（服务常驻·低功耗）" "CPU 5-60%、显示器 10 分钟关、不睡眠、硬盘 20 分钟停转"
 }
 
 # CPU 5%~60%（交流 + 电池）
@@ -63,9 +63,11 @@ powercfg /setacvalueindex $guid SUB_VIDEO VIDEOIDLE 600
 # 永不睡眠 / 永不休眠
 powercfg /setacvalueindex $guid SUB_SLEEP STANDBYIDLE 0
 powercfg /setacvalueindex $guid SUB_SLEEP HIBERNATEIDLE 0
-# 硬盘永不停转
-powercfg /setacvalueindex $guid SUB_DISK DISKIDLE 0
+# 硬盘 20 分钟后停转（原来是「永不」，两块机械盘会一直转着）
+powercfg /setacvalueindex $guid SUB_DISK DISKIDLE 1200
+# PCIe 链接状态电源管理：最大省电（原来是「中等省电」）
+powercfg /setacvalueindex $guid SUB_PCIEXPRESS ee12f906-d277-404b-b6da-e5fa1a576df5 2
 
 powercfg /setactive $guid
-Write-Host "[ok] 已应用：CPU 5-60%、显示器 10 分钟关、不睡眠、硬盘常转"
+Write-Host "[ok] 已应用：CPU 5-60%、显示器 10 分钟关、不睡眠、硬盘 20 分钟停转、PCIe 最大省电"
 Write-Host "[ok] 当前方案 -> $guid"

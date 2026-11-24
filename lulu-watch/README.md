@@ -33,7 +33,7 @@ lulu-watch/
 ├── 启动挂件.cmd            双击启动（pythonw 无控制台窗口）
 ├── requirements.txt       psutil + pillow + pystray
 ├── power-modes/           配套电源方案切换脚本（挂件按钮等价物）
-│   ├── 挂机模式.cmd        CPU 5~60%，显示器 10 分钟关，不休眠，硬盘常转
+│   ├── 挂机模式.cmd        CPU 5~60%，显示器 10 分钟关，不休眠，硬盘 20 分钟停转
 │   ├── 恢复模式.cmd        平衡方案
 │   ├── 守夜模式.cmd        低功耗守夜
 │   ├── 开黑模式.cmd        高性能
@@ -76,7 +76,7 @@ python  widget.py --preview  :: 只渲染预览图 preview.png / preview_dark.pn
    | 平衡 | `381b4222-f694-41f0-9685-ff5bb260df2e` |
    | 高性能 | `8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c` |
    | 节能 | `a1841308-3541-4fab-bc81-f71556f20b4a` |
-   | 挂机（自定义） | `79d386e3-3601-482d-aeb4-cc38e16c3d8f` ← 只在本机存在 |
+   | 挂机（自定义） | `22f98355-2f49-49ce-8a7f-c138149382ce` ← 只在本机存在 |
 
    自定义挂机方案不是系统自带的。新机器上执行：
 
@@ -84,7 +84,7 @@ python  widget.py --preview  :: 只渲染预览图 preview.png / preview_dark.pn
    powershell -ExecutionPolicy Bypass -File power-modes\rebuild-idle-scheme.ps1
    ```
 
-   脚本会复制「平衡」方案、套上 CPU 5~60% / 显示器 10 分钟关 / 不休眠 / 硬盘常转的参数，并把生成的新 GUID 自动替换进同级 `widget.py`（备份为 `widget.py.bak`）。方案已存在时只重设参数，不会重复创建。
+   脚本会复制「平衡」方案、套上 CPU 5~60% / 显示器 10 分钟关 / 不休眠 / 硬盘 20 分钟停转 / PCIe 最大省电的参数，并把生成的新 GUID 自动替换进同级 `widget.py`（备份为 `widget.py.bak`）。方案已存在时只重设参数，不会重复创建。
 4. **字体** —— `_font()` 里优先用微软雅黑（`msyh.ttc` / `msyhbd.ttc`），缺失时降级到黑体、宋体、默认字体。
 
 ## 实现要点

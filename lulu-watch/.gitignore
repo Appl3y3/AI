@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 error.log
 *.bak
+# 本机电源方案的备份与快照，换机器没意义
+power-modes/idle-scheme-backup.reg
+power-modes/idle-before-rebuild.txt
