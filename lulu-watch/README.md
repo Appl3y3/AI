@@ -84,7 +84,12 @@ python  widget.py --preview  :: 只渲染预览图 preview.png / preview_dark.pn
    powershell -ExecutionPolicy Bypass -File power-modes\rebuild-idle-scheme.ps1
    ```
 
-   脚本会复制「平衡」方案、套上 CPU 5~60% / 显示器 10 分钟关 / 不休眠 / 硬盘 20 分钟停转 / PCIe 最大省电的参数，并把生成的新 GUID 自动替换进同级 `widget.py`（备份为 `widget.py.bak`）。方案已存在时只重设参数，不会重复创建。
+   脚本会复制「平衡」方案、套上 CPU 5~60% / 显示器 10 分钟关 / 不休眠 / 硬盘 20 分钟停转 / PCIe 最大省电 / JavaScript 计时器省电 / 显卡优化省电的参数，并把生成的新 GUID 自动替换进同级 `widget.py`（备份为 `widget.py.bak`）。方案已存在时只重设参数，不会重复创建。
+
+   > **改这个脚本时注意保留 UTF-8 BOM**。Windows PowerShell 5.1 读无 BOM 的 `.ps1` 会按 GBK 解码，中文注释变成乱码后整个脚本解析失败（报「一元运算符 ! 后面缺少表达式」之类）。用 VS Code 存成「UTF-8 with BOM」，别用会吞掉 BOM 的编辑器。验证方法：
+   > ```powershell
+   > $b=[IO.File]::ReadAllBytes("power-modes\rebuild-idle-scheme.ps1"); $b[0]-eq0xEF -and $b[1]-eq0xBB -and $b[2]-eq0xBF
+   > ```
 4. **字体** —— `_font()` 里优先用微软雅黑（`msyh.ttc` / `msyhbd.ttc`），缺失时降级到黑体、宋体、默认字体。
 
 ## 实现要点
