@@ -1,0 +1,6 @@
+[
+  { "file": "v-movie.png",  "url": "http://127.0.0.1:8787/#/browse?cat=movie", "wait": 9000 },
+  { "file": "v-tv.png",     "url": "http://127.0.0.1:8787/#/browse?cat=tv", "wait": 9000 },
+  { "file": "v-variety.png","url": "http://127.0.0.1:8787/#/browse?cat=variety", "wait": 12000 },
+  { "file": "v-short.png",  "url": "http://127.0.0.1:8787/#/browse?cat=shortplay", "wait": 9000 }
+]

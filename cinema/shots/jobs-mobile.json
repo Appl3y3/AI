@@ -1,0 +1,10 @@
+{
+  "viewport": { "width": 390, "height": 844 },
+  "jobs": [
+    { "name": "m-home",   "url": "http://127.0.0.1:8787/#/", "wait": 7000, "file": "m-home.png" },
+    { "name": "m-browse", "url": "http://127.0.0.1:8787/#/browse?cat=jpanime", "wait": 7000, "file": "m-browse.png" },
+    { "name": "m-detail", "url": "http://127.0.0.1:8787/#/detail/guangsu/225090", "wait": 7000, "file": "m-detail.png" },
+    { "name": "m-play",   "url": "http://127.0.0.1:8787/#/play/guangsu/225090?ep=0&line=0", "wait": 14000, "file": "m-play.png" },
+    { "name": "m-sched",  "url": "http://127.0.0.1:8787/#/schedule", "wait": 8000, "file": "m-sched.png" }
+  ]
+}

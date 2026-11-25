@@ -1,0 +1,8 @@
+# 运行时数据（弹幕落盘、Chrome 调试 profile）
+data/
+
+# 验证截图体积大，不入库；验证脚本保留
+shots/*.png
+
+*.log
+.tmp-*/

@@ -1,0 +1,23 @@
+{
+  "viewport": { "width": 390, "height": 844 },
+  "jobs": [
+    {
+      "name": "m-me",
+      "url": "http://127.0.0.1:8787/#/me",
+      "wait": 2500,
+      "eval": "({tabs: [...document.querySelectorAll('.me-tab')].map(a=>a.textContent.trim()).join(' | '), stats: [...document.querySelectorAll('.stat-num')].map(e=>e.textContent).join(','), rowW: document.body.scrollWidth, winW: window.innerWidth})"
+    },
+    {
+      "name": "m-set",
+      "url": "http://127.0.0.1:8787/#/settings",
+      "wait": 2000,
+      "eval": "({rows: document.querySelectorAll('.setting-row').length, rowW: document.body.scrollWidth, winW: window.innerWidth, labels: [...document.querySelectorAll('.setting-label')].slice(0,6).map(e=>e.textContent).join(' / ')})"
+    },
+    {
+      "name": "m-browse",
+      "url": "http://127.0.0.1:8787/#/browse?cat=jpanime",
+      "wait": 9000,
+      "eval": "({sub: document.querySelector('.page-sub')?.textContent||'', cards: document.querySelectorAll('.card').length, rowW: document.body.scrollWidth, winW: window.innerWidth, chips: document.querySelectorAll('.chip').length})"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+[
+  { "file": "v-home.png",   "url": "http://127.0.0.1:8787/#/", "wait": 7000 },
+  { "file": "v-detail.png", "url": "http://127.0.0.1:8787/#/detail/guangsu/225090", "wait": 7000 },
+  { "file": "v-sched.png",  "url": "http://127.0.0.1:8787/#/schedule", "wait": 9000 },
+  { "file": "v-toku.png",   "url": "http://127.0.0.1:8787/#/topic/tokusatsu", "wait": 9000 }
+]

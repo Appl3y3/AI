@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>拾光影院</title>
+<meta name="theme-color" content="#0b0d12" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23e0453c'/%3E%3Cpath d='M12 9l13 7-13 7z' fill='%23fff'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/" data-link>
+        <span class="brand-mark">拾光</span>
+        <span class="brand-sub">影院</span>
+      </a>
+
+      <nav class="nav" id="mainNav">
+        <a href="#/" data-link data-nav="home">首页</a>
+        <a href="#/browse?cat=anime" data-link data-nav="anime">动漫</a>
+        <a href="#/browse?cat=jpanime" data-link data-nav="jpanime">日漫</a>
+        <a href="#/browse?cat=animeMovie" data-link data-nav="animemovie">剧场版</a>
+        <a href="#/topic/tokusatsu" data-link data-nav="tokusatsu">特摄</a>
+        <a href="#/browse?cat=movie" data-link data-nav="movie">电影</a>
+        <a href="#/schedule" data-link data-nav="schedule">放送表</a>
+        <a href="#/browse?cat=tv" data-link data-nav="tv">剧集</a>
+        <a href="#/browse?cat=variety" data-link data-nav="variety">综艺</a>
+      </nav>
+
+      <div class="topbar-right">
+        <div class="search-box">
+          <input id="globalSearch" type="search" placeholder="搜索片名、演员…" autocomplete="off" />
+          <kbd class="search-kbd">/</kbd>
+        </div>
+        <a class="icon-btn" href="#/me" data-link data-nav="me" title="个人中心">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5Z"/></svg>
+        </a>
+        <a class="icon-btn" href="#/settings" data-link data-nav="settings" title="设置">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8.4 4a8.4 8.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a8 8 0 0 0-2-1.2L15.5 3h-4l-.4 2.6a8 8 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a8.4 8.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a8 8 0 0 0 2 1.2l.4 2.6h4l.4-2.6a8 8 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.07-.4.1-.8.1-1.2Z"/></svg>
+        </a>
+      </div>
+    </div>
+    <div class="scroll-progress" id="scrollProgress"></div>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <div>
+        <strong>拾光影院</strong> · 本地聚合播放器
+        <div class="muted small">所有片源来自公开采集接口，本站仅做聚合展示，不存储任何视频文件。仅供学习交流。</div>
+      </div>
+      <div class="footer-status" id="footerStatus"></div>
+    </div>
+  </footer>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="/vendor/hls.min.js"></script>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

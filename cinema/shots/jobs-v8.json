@@ -1,0 +1,17 @@
+{
+  "viewport": { "width": 1440, "height": 1000 },
+  "jobs": [
+    {
+      "name": "z-jp",
+      "url": "http://127.0.0.1:8787/#/search?kw=%E8%91%AC%E9%80%81%E3%81%AE%E3%83%95%E3%83%AA%E3%83%BC%E3%83%AC%E3%83%B3",
+      "wait": 24000,
+      "eval": "({tip: document.querySelector('.match-tip')?.textContent||'', sub: document.querySelector('.page-sub')?.textContent||'', cards: document.querySelectorAll('.card').length, first: document.querySelector('.card-name')?.textContent||''})"
+    },
+    {
+      "name": "z-detail",
+      "url": "http://127.0.0.1:8787/#/detail/guangsu/225090",
+      "wait": 12000,
+      "eval": "({title: document.querySelector('.detail-title')?.textContent||'', meta: document.querySelector('.detail-meta')?.textContent||'', lines: document.querySelectorAll('.line-tab').length, playBtn: !!document.querySelector('#playBtn, .detail-actions a')})"
+    }
+  ]
+}

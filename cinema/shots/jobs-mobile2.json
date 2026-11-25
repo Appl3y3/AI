@@ -1,0 +1,7 @@
+{
+  "viewport": { "width": 390, "height": 844 },
+  "jobs": [
+    { "name": "m-play2", "url": "http://127.0.0.1:8787/#/play/guangsu/225090?ep=0&line=0", "wait": 14000, "file": "m-play2.png",
+      "eval": "(function(){var r=document.querySelector('.pctrl-row:last-child');var b=document.querySelector('#btnFull').getBoundingClientRect();return JSON.stringify({rowW:Math.round(r.getBoundingClientRect().width),scrollW:r.scrollWidth,fullRight:Math.round(b.right),vw:innerWidth});})()" }
+  ]
+}

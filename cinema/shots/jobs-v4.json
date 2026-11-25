@@ -1,0 +1,10 @@
+{
+  "viewport": { "width": 1440, "height": 1000 },
+  "jobs": [
+    { "name": "n-movie",   "url": "http://127.0.0.1:8787/#/browse?cat=movie",  "wait": 6000, "shot": true },
+    { "name": "n-animemv", "url": "http://127.0.0.1:8787/#/browse?cat=animeMovie", "wait": 6000, "shot": true },
+    { "name": "n-search",  "url": "http://127.0.0.1:8787/#/search?kw=%E9%BB%91%E6%9A%97", "wait": 9000, "shot": true, "body": true },
+    { "name": "n-home",    "url": "http://127.0.0.1:8787/#/", "wait": 6000, "shot": true,
+      "eval": "(function(){const a=[...document.querySelectorAll('#mainNav a')];return a.map(x=>x.textContent.trim()+(x.classList.contains('active')?'*':'')).join(' ');})()" }
+  ]
+}

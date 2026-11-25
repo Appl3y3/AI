@@ -1,0 +1,23 @@
+{
+  "viewport": { "width": 1440, "height": 1000 },
+  "jobs": [
+    {
+      "name": "f-home",
+      "url": "http://127.0.0.1:8787/#/home",
+      "wait": 9000,
+      "eval": "({hero: document.querySelector('.hero-title')?.textContent||'', hot: document.querySelectorAll('.grid')[0]?.querySelectorAll('.card').length||0, nav: [...document.querySelectorAll('.nav a')].map(a=>a.textContent).join(' '), status: document.querySelector('#footerStatus')?.textContent||''})"
+    },
+    {
+      "name": "f-sched",
+      "url": "http://127.0.0.1:8787/#/schedule",
+      "wait": 12000,
+      "eval": "({tabs: [...document.querySelectorAll('.schedule-tab')].map(b=>b.textContent.trim()).join(' | '), items: document.querySelectorAll('.schedule-item').length, first: document.querySelector('.schedule-name')?.textContent||''})"
+    },
+    {
+      "name": "f-toku",
+      "url": "http://127.0.0.1:8787/#/topic/tokusatsu",
+      "wait": 20000,
+      "eval": "({sub: document.querySelector('.page-sub')?.textContent||'', cards: document.querySelectorAll('.card').length, names: [...document.querySelectorAll('.card-name')].slice(0,5).map(e=>e.textContent).join(' / ')})"
+    }
+  ]
+}

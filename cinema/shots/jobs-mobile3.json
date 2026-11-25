@@ -1,0 +1,8 @@
+{
+  "viewport": { "width": 390, "height": 844 },
+  "jobs": [
+    { "name": "m2-home", "url": "http://127.0.0.1:8787/#/", "wait": 7000, "file": "m2-home.png",
+      "eval": "(function(){var n=document.querySelector('#mainNav');return JSON.stringify({topbarH:Math.round(document.querySelector('.topbar').getBoundingClientRect().height),navScrollW:n.scrollWidth,navClientW:n.clientWidth});})()" },
+    { "name": "m2-play", "url": "http://127.0.0.1:8787/#/play/guangsu/225090?ep=0&line=0", "wait": 15000, "file": "m2-play.png" }
+  ]
+}

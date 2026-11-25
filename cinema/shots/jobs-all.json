@@ -1,0 +1,8 @@
+[
+  { "url": "http://127.0.0.1:8787/#/", "file": "p-home.png", "wait": 10000, "h": 1150 },
+  { "url": "http://127.0.0.1:8787/#/browse?cat=jpanime", "file": "p-browse.png", "wait": 9000, "h": 1150 },
+  { "url": "http://127.0.0.1:8787/#/topic/tokusatsu", "file": "p-toku.png", "wait": 14000, "h": 1150 },
+  { "url": "http://127.0.0.1:8787/#/schedule", "file": "p-schedule.png", "wait": 9000, "h": 1150 },
+  { "url": "http://127.0.0.1:8787/#/me", "file": "p-me.png", "wait": 6000, "h": 1000 },
+  { "url": "http://127.0.0.1:8787/#/settings", "file": "p-settings.png", "wait": 6000, "h": 1300 }
+]

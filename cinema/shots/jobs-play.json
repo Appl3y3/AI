@@ -1,0 +1,4 @@
+[
+  { "url": "http://127.0.0.1:8787/#/detail/guangsu/225090", "file": "p-detail.png", "wait": 8000 },
+  { "url": "http://127.0.0.1:8787/#/play/guangsu/225090?ep=0&line=0", "file": "p-play.png", "wait": 18000 }
+]
