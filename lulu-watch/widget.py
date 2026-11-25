@@ -62,7 +62,7 @@ SCALE = _system_scale()
 
 # ==================== 外观常量（逻辑坐标，渲染时乘 SCALE）====================
 TITLE = "噜噜监控"
-W, H = 272, 370
+W, H = 272, 410
 RADIUS = 18
 SS = 3                       # 圆角超采样倍数
 KEY = "#ff00ff"              # 透明键色
@@ -93,10 +93,11 @@ SCHEMES = {
 MODE_IDLE = "22f98355-2f49-49ce-8a7f-c138149382ce"
 MODE_NORMAL = "381b4222-f694-41f0-9685-ff5bb260df2e"
 
-SERVICES = [("噜妹日记", 8765), ("噜妹影库", 8977)]
+SERVICES = [("噜妹日记", 8765), ("噜妹影库", 8977), ("XiaoMusic", 8090)]
 
-# Caddy 是这两个服务共用的入口：8444 -> 日记、8445 -> 影库。
+# Caddy 是日记/影库共用的入口：8444 -> 日记、8445 -> 影库。
 # 它挂了两个服务会同时失联，而本机两个端口还都通，所以单独一行。
+# XiaoMusic 不在这套反代后面（8090 只在本机可达），是自己独立的一行。
 CADDY_PORTS = [8444, 8445]
 CADDY_NAME = "Caddy 反代"
 
@@ -476,9 +477,9 @@ class Brightness(threading.Thread):
 
 # ==================== 托盘图标 ====================
 def tray_image(svc=None, caddy=None):
-    """64x64：深色圆角底 + 三条状态色条（上=Caddy，中=日记，下=影库），
+    """64x64：深色圆角底 + 状态色条（上=Caddy，下面依次是各服务），
     缩小到 16px 也能看清死活。Caddy 那条画得短一点、两端带缺口，
-    一眼能和下面两条服务条区分开。"""
+    一眼能和下面几条服务条区分开。"""
     S = 64
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -487,16 +488,16 @@ def tray_image(svc=None, caddy=None):
     bars = []
     if caddy is not None:
         bars.append(bool(caddy))
-    bars += [bool(s.get("up")) for s in (svc or [])][:2]
-    # 不跑 Caddy 时（caddy=None）只画两条服务条，不要多出一条假的红条
-    need = 3 if caddy is not None else 2
+    bars += [bool(s.get("up")) for s in (svc or [])][:3]
+    # 不跑 Caddy 时（caddy=None）只画服务条，不要多出一条假的红条
+    need = 4 if caddy is not None else 3
     while len(bars) < need:
         bars.append(False)
     for i, up in enumerate(bars):
         c = (61, 220, 151, 255) if up else (255, 92, 108, 255)
-        y = 13 + i * 13
+        y = 9 + i * 12
         x1, x2 = (18, 46) if i == 0 else (14, 50)
-        d.rounded_rectangle([x1, y, x2, y + 8], radius=4, fill=c)
+        d.rounded_rectangle([x1, y, x2, y + 7], radius=3, fill=c)
     return img
 
 
@@ -604,8 +605,8 @@ def build_image(data, hover=None, k=None):
            fill=CLR["divider"], width=lw)
 
     # ---------- 服务状态 ----------
-    rows = [(116, 134), (156, 174)]
-    for i, s in enumerate(data.get("svc", [])[:2]):
+    rows = [(116, 134), (156, 174), (196, 214)]
+    for i, s in enumerate(data.get("svc", [])[:3]):
         cy, sy = rows[i]
         up = s.get("up")
         dotc = CLR["ok"] if up else CLR["bad"]
@@ -622,7 +623,7 @@ def build_image(data, hover=None, k=None):
         d.text((px(38), px(sy)), sub, font=F["sub"], fill=CLR["fg_faint"],
                anchor="lm")
 
-    d.line([(px(18), px(192)), (pw - px(18), px(192))],
+    d.line([(px(18), px(232)), (pw - px(18), px(232))],
            fill=CLR["divider"], width=lw)
 
     # ---------- CPU / 内存 ----------
@@ -649,13 +650,13 @@ def build_image(data, hover=None, k=None):
         cpu_hint = f"{_cf.current / 1000:.1f}GHz" if _cf and _cf.current else ""
     except Exception:
         cpu_hint = ""
-    gauge(206, 216, "CPU", float(data.get("cpu") or 0), cpu_hint)
+    gauge(246, 256, "CPU", float(data.get("cpu") or 0), cpu_hint)
     used = data.get("mem_used") or 0
     total = data.get("mem_total") or 0
-    gauge(236, 246, "内存", float(data.get("mem") or 0),
+    gauge(276, 286, "内存", float(data.get("mem") or 0),
           f"{used:.0f}/{total:.0f}G" if total else "")
 
-    d.line([(px(18), px(262)), (pw - px(18), px(262))],
+    d.line([(px(18), px(302)), (pw - px(18), px(302))],
            fill=CLR["divider"], width=lw)
 
     # ---------- 显示器亮度（只控制 2K 那台） ----------
@@ -663,22 +664,22 @@ def build_image(data, hover=None, k=None):
     bri = data.get("bright")
     bl = data.get("bright_label") or "亮度"
     # 滑杆的点击/拖动热区比可见轨道高，免得要点准那 7px 细条
-    slider = (18, 284, W - 18, 302)
+    slider = (18, 324, W - 18, 342)
     if bri is None:
-        d.text((px(18), px(276)), bl, font=F["label"], fill=CLR["fg_faint"],
+        d.text((px(18), px(316)), bl, font=F["label"], fill=CLR["fg_faint"],
                anchor="lm")
-        d.text((pw - px(18), px(276)), "不可用", font=F["sub"],
+        d.text((pw - px(18), px(316)), "不可用", font=F["sub"],
                fill=CLR["fg_faint"], anchor="rm")
-        d.text((px(18), px(293)), "这台显示器没响应 DDC/CI",
+        d.text((px(18), px(333)), "这台显示器没响应 DDC/CI",
                font=F["sub"], fill=CLR["fg_faint"], anchor="lm")
     else:
         pct = max(0, min(100, int(bri)))
-        d.text((px(18), px(278)), bl, font=F["label"], fill=CLR["fg_dim"],
+        d.text((px(18), px(318)), bl, font=F["label"], fill=CLR["fg_dim"],
                anchor="lm")
-        d.text((pw - px(18), px(278)), f"{pct}%", font=F["value"],
+        d.text((pw - px(18), px(318)), f"{pct}%", font=F["value"],
                fill=CLR["fg"], anchor="rm")
         x1, x2 = px(18), pw - px(18)
-        yb = px(292)
+        yb = px(332)
         bh = max(3, P(7))
         d.rounded_rectangle([x1, yb, x2, yb + bh], radius=bh / 2,
                             fill=CLR["track"])
@@ -699,7 +700,7 @@ def build_image(data, hover=None, k=None):
     # ---------- 按钮 ----------
     buttons = {}
     bw = (W - 36 - 10) // 2
-    by1, by2 = 314, 352
+    by1, by2 = 354, 392
     specs = [(18, "挂机", MODE_IDLE, CLR["accent"]),
              (18 + bw + 10, "恢复", MODE_NORMAL, CLR["ok"])]
     for bx, text, guid, color in specs:
@@ -1096,6 +1097,7 @@ class Widget:
                 MenuItem(lambda item: self._caddy_line(), None, enabled=False),
                 MenuItem(lambda item: self._svc_line(0), None, enabled=False),
                 MenuItem(lambda item: self._svc_line(1), None, enabled=False),
+                MenuItem(lambda item: self._svc_line(2), None, enabled=False),
                 Menu.SEPARATOR,
                 MenuItem(lambda item: self._bright_line(), None, enabled=False),
                 MenuItem("亮度 30%", lambda icon, item: self._post(
