@@ -422,16 +422,20 @@ class Brightness(threading.Thread):
         self.stop_flag = False
         self._lock = threading.Lock()
         self._want = None
+        self._seq = 0
         self.mon = None
 
     def set(self, pct):
+        """记下用户想要的值，返回这次的序号。序号给主线程用来丢掉过期回显。"""
         with self._lock:
+            self._seq += 1
             self._want = max(0, min(100, int(pct)))
+            return self._seq
 
     def _take(self):
         with self._lock:
             w, self._want = self._want, None
-            return w
+            return w, self._seq
 
     def _peek(self):
         with self._lock:
@@ -445,13 +449,16 @@ class Brightness(threading.Thread):
         self.mon = mon
         last = None
         while not self.stop_flag:
-            want = self._take()
+            want, seq = self._take()
             if want is not None:
                 ok = set_brightness(mon, want)
                 cur = want if ok else brightness_percent(mon, fresh=True)
                 # 写太快会把 I2C 压满，留一点间隔
                 time.sleep(0.08)
             else:
+                # 序号要在读之前取：这次回读要 60ms，中途用户可能已经开始拖动，
+                # 读完之后再取序号会把「拖动前的旧值」错当成新值放过去
+                seq = self._seq
                 cur = brightness_percent(mon, fresh=True)
                 # 没人动滑杆就慢慢回读：用户按显示器上的实体按键改了也能跟上
                 for _ in range(30):
@@ -462,7 +469,9 @@ class Brightness(threading.Thread):
                     continue
             if cur is not None and cur != last:
                 last = cur
-                self.q.put({"bright": cur})
+                # 带上写入时的序号：主线程若已经收到更新的拖动，就丢掉这条过期回显，
+                # 否则手拖到 80 时线程才写完 60，回显会把把手拽回 60
+                self.q.put({"bright": cur, "bright_seq": seq})
 
 
 # ==================== 托盘图标 ====================
@@ -797,6 +806,7 @@ class Widget:
         self.buttons = {}
         self.slider = None
         self._slide = False
+        self._bright_seq = 0
         self._drag = None
         self._moved = False
         self._hover = None
@@ -869,13 +879,16 @@ class Widget:
                 return guid
         return None
 
-    def _on_slider(self, e):
-        """返回鼠标位置对应的亮度百分比；不在滑杆热区内返回 None"""
+    def _on_slider(self, e, sticky=False):
+        """返回鼠标位置对应的亮度百分比；不在滑杆热区内返回 None。
+
+        sticky=True 用在拖动过程中：这时候已经认定用户在拖滑杆，鼠标纵向
+        漂出那 18px 窄带不该让滑杆卡住，只把 x 夹回轨道两端。"""
         if not self.slider:
             return None
         lx, ly = e.x / SCALE, e.y / SCALE
         x1, y1, x2, y2 = self.slider
-        if not (y1 <= ly <= y2):
+        if not sticky and not (y1 <= ly <= y2):
             return None
         return max(0, min(100, round((lx - x1) * 100.0 / max(1, x2 - x1))))
 
@@ -905,7 +918,7 @@ class Widget:
 
     def _on_drag(self, e):
         if self._slide:
-            pct = self._on_slider(e)
+            pct = self._on_slider(e, sticky=True)
             if pct is not None:
                 self._apply_bright(pct)
             return
@@ -932,7 +945,7 @@ class Widget:
         self.data["bright"] = pct
         self._draw()
         try:
-            self.bright.set(pct)
+            self._bright_seq = self.bright.set(pct)
         except Exception:
             pass
 
@@ -993,10 +1006,16 @@ class Widget:
                 break
         while True:
             try:
-                self.data.update(self.bqueue.get_nowait())
-                got = True
+                msg = self.bqueue.get_nowait()
             except queue.Empty:
                 break
+            # 亮度线程的回显带序号：拖动时用户已经推到了更新的位置，
+            # 这条是旧值（线程写完才知道结果），丢掉才不会把把手拽回去
+            seq = msg.get("bright_seq")
+            if seq is not None and seq < self._bright_seq:
+                continue
+            self.data.update(msg)
+            got = True
         while True:                      # 托盘线程投递的动作，在主线程执行
             try:
                 fn = self.cmdq.get_nowait()
