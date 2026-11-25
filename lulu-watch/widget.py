@@ -192,6 +192,59 @@ def probe_caddy(ports=None, timeout=0.35):
     return live, best
 
 
+def listen_pids(ports):
+    """一次枚举所有 TCP 监听，返回 {端口: pid}。比逐个端口反查快得多，
+    而且一次调用就能把四个服务全查完（本机 900 来条连接，实测 6ms）。"""
+    want = set(ports)
+    out = {}
+    try:
+        for c in psutil.net_connections(kind="tcp"):
+            if c.status != psutil.CONN_LISTEN or not c.laddr:
+                continue
+            port = c.laddr.port
+            if port in want and c.pid:
+                out.setdefault(port, c.pid)
+    except Exception:
+        pass
+    return out
+
+
+def tree_rss_mb(pid):
+    """pid 及其全部子孙进程的常驻内存合计（MB）。
+
+    必须算子进程：XiaoMusic 主进程 98M，它还拉一个 node 跑 js 插件再占 58M，
+    只看主进程会少报一半。反过来**不**往上算父进程——venv 启动器、
+    wscript 那些是外壳，一路往上会爬进 explorer.exe。
+    conhost.exe 也排除：那是 Windows 的控制台宿主，按控制台分配、会被复用，
+    不是服务自己的开销。"""
+    if not pid:
+        return None
+    try:
+        p = psutil.Process(pid)
+        procs = [p] + p.children(recursive=True)
+    except Exception:
+        return None
+    total, got = 0, False
+    for q in procs:
+        try:
+            if q.name().lower() == "conhost.exe":
+                continue
+            total += q.memory_info().rss
+            got = True
+        except Exception:
+            continue
+    return total / (1024 ** 2) if got else None
+
+
+def fmt_mb(mb):
+    """35 -> '35M'，1560 -> '1.5G'。统一成 3-4 个字符宽，右对齐才齐整。"""
+    if mb is None:
+        return ""
+    if mb >= 1024:
+        return f"{mb / 1024:.1f}G"
+    return f"{mb:.0f}M"
+
+
 def active_scheme():
     try:
         import winreg
@@ -599,6 +652,10 @@ def build_image(data, hover=None, k=None):
         sub = " / ".join(str(p) for p in CADDY_PORTS) + " 都没在听" if CADDY_PORTS else "没配端口"
     d.text((px(38), px(csy)), sub, font=F["sub"], fill=CLR["fg_faint"],
            anchor="lm")
+    cmem = fmt_mb(cad.get("mem"))
+    if cmem:
+        d.text((pw - px(18), px(csy)), cmem, font=F["sub"],
+               fill=CLR["fg_dim"], anchor="rm")
 
     # 入口与后端之间用更淡的分隔，暗示「这两条服务挂在它后面」
     d.line([(px(24), px(100)), (pw - px(18), px(100))],
@@ -622,6 +679,11 @@ def build_image(data, hover=None, k=None):
             sub += f"    {s['ms']:.1f}ms"
         d.text((px(38), px(sy)), sub, font=F["sub"], fill=CLR["fg_faint"],
                anchor="lm")
+        # 内存单独右对齐：让它和上面那排「运行中」右边缘对齐，扫一眼就能纵向比大小
+        smem = fmt_mb(s.get("mem"))
+        if smem:
+            d.text((pw - px(18), px(sy)), smem, font=F["sub"],
+                   fill=CLR["fg_dim"], anchor="rm")
 
     d.line([(px(18), px(232)), (pw - px(18), px(232))],
            fill=CLR["divider"], width=lw)
@@ -739,16 +801,24 @@ class Sampler(threading.Thread):
         while not self.stop_flag:
             try:
                 vm = psutil.virtual_memory()
+                # 端口 -> pid 一次查完（四个服务 + Caddy 两个端口共用一次枚举），
+                # 再按 pid 汇总各自进程树的内存
+                pidmap = listen_pids([p for _, p in SERVICES] + CADDY_PORTS)
                 svc = []
                 for name, port in SERVICES:
                     up, ms = probe_port(port)
-                    svc.append({"name": name, "port": port, "up": up, "ms": ms})
+                    mb = tree_rss_mb(pidmap.get(port)) if up else None
+                    svc.append({"name": name, "port": port, "up": up,
+                                "ms": ms, "mem": mb})
                 live, cms = probe_caddy()
+                # Caddy 两个站点在同一个进程里，取任一在听的端口即可
+                cpid = next((pidmap[p] for p in live if p in pidmap), None)
                 caddy = {
                     "live": live,
                     "ms": cms,
                     "state": ("ok" if len(live) == len(CADDY_PORTS)
                               else "warn" if live else "down"),
+                    "mem": tree_rss_mb(cpid),
                 }
                 self.q.put({
                     "cpu": psutil.cpu_percent(interval=None),
@@ -797,9 +867,9 @@ class Widget:
 
         self.data = {
             "cpu": 0.0, "mem": 0.0, "mem_used": 0, "mem_total": 0,
-            "svc": [{"name": n, "port": p, "up": False, "ms": None}
-                    for n, p in SERVICES],
-            "caddy": {"live": [], "ms": None, "state": "down"},
+            "svc": [{"name": n, "port": p, "up": False, "ms": None,
+                     "mem": None} for n, p in SERVICES],
+            "caddy": {"live": [], "ms": None, "state": "down", "mem": None},
             "scheme": active_scheme(),
             "bright": None,
             "bright_label": "亮度",
@@ -1145,14 +1215,19 @@ class Widget:
         st = cad.get("state")
         word = {"ok": "运行中", "warn": "部分", }.get(st, "未运行")
         live = cad.get("live") or []
-        return "%s  %s（%s）" % (CADDY_NAME, word,
-                                "·".join(str(p) for p in live) or "无端口")
+        return "%s  %s（%s）%s" % (CADDY_NAME, word,
+                                  "·".join(str(p) for p in live) or "无端口",
+                                  "  " + fmt_mb(cad.get("mem"))
+                                  if cad.get("mem") else "")
 
     def _svc_line(self, i):
         svc = self.data.get("svc") or []
         if i < len(svc):
             s = svc[i]
-            return "%s  %s" % (s["name"], "运行中" if s.get("up") else "未响应")
+            mem = fmt_mb(s.get("mem"))
+            return "%s  %s%s" % (s["name"],
+                                 "运行中" if s.get("up") else "未响应",
+                                 "  " + mem if mem else "")
         return "—"
 
     def _bright_line(self):
@@ -1229,16 +1304,20 @@ class Widget:
 # ==================== 预览 ====================
 def preview(k=2.0):
     scheme = active_scheme()
+    pidmap = listen_pids([p for _, p in SERVICES] + CADDY_PORTS)
     svc = []
     for name, port in SERVICES:
         up, ms = probe_port(port)
-        svc.append({"name": name, "port": port, "up": up, "ms": ms})
+        svc.append({"name": name, "port": port, "up": up, "ms": ms,
+                    "mem": tree_rss_mb(pidmap.get(port)) if up else None})
     live, cms = probe_caddy()
+    cpid = next((pidmap[p] for p in live if p in pidmap), None)
     caddy = {
         "live": live,
         "ms": cms,
         "state": ("ok" if len(live) == len(CADDY_PORTS)
                   else "warn" if live else "down"),
+        "mem": tree_rss_mb(cpid),
     }
     vm = psutil.virtual_memory()
     # 预览不真去读写显示器（DDC/CI 一次 60ms，且会改到用户当前的亮度），
