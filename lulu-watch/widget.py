@@ -2,7 +2,8 @@
 """
 噜噜监控 —— 桌面小贴纸
 显示：电源模式 / Caddy 入口 / 噜妹日记 / 噜妹影库 运行状态 / CPU / 内存
-可点按钮在「挂机」「恢复」之间切换
+      / 2K 那台显示器的亮度（DDC/CI 硬件调光）
+可点按钮在「挂机」「恢复」之间切换，可拖滑杆调亮度
 
 用法：
     pythonw widget.py            启动挂件
@@ -18,6 +19,7 @@ import queue
 import threading
 import subprocess
 import tkinter as tk
+from ctypes import wintypes
 
 import psutil
 from PIL import Image, ImageDraw, ImageFont, ImageTk
@@ -60,7 +62,7 @@ SCALE = _system_scale()
 
 # ==================== 外观常量（逻辑坐标，渲染时乘 SCALE）====================
 TITLE = "噜噜监控"
-W, H = 272, 328
+W, H = 272, 370
 RADIUS = 18
 SS = 3                       # 圆角超采样倍数
 KEY = "#ff00ff"              # 透明键色
@@ -200,6 +202,267 @@ def active_scheme():
         return str(val).strip().lower()
     except Exception:
         return ""
+
+
+# ==================== 显示器亮度（DDC/CI 硬件调光）====================
+# 只用 dxva2 那套 Win32 接口，不依赖桌面上那个 BrightnessCtl.exe。
+# 4K 那台（Mi Monitor）对 DDC/CI 完全不响应，所以这里按「原生分辨率」筛：
+# 只认 2560x1440 那块，4K 那块连开都不开，天然不会被误调。
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+class _MONITORINFOEXW(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", _RECT),
+                ("rcWork", _RECT), ("dwFlags", wintypes.DWORD),
+                ("szDevice", ctypes.c_wchar * 32)]
+
+
+class _DEVMODE(ctypes.Structure):
+    _fields_ = [
+        ("dmDeviceName", ctypes.c_wchar * 32),
+        ("dmSpecVersion", wintypes.WORD), ("dmDriverVersion", wintypes.WORD),
+        ("dmSize", wintypes.WORD), ("dmDriverExtra", wintypes.WORD),
+        ("dmFields", wintypes.DWORD),
+        ("dmPositionX", ctypes.c_long), ("dmPositionY", ctypes.c_long),
+        ("dmDisplayOrientation", wintypes.DWORD),
+        ("dmDisplayFixedOutput", wintypes.DWORD),
+        ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short),
+        ("dmYResolution", ctypes.c_short), ("dmTTOption", ctypes.c_short),
+        ("dmCollate", ctypes.c_short),
+        ("dmFormName", ctypes.c_wchar * 32),
+        ("dmLogPixels", wintypes.WORD),
+        ("dmBitsPerPel", wintypes.DWORD), ("dmPelsWidth", wintypes.DWORD),
+        ("dmPelsHeight", wintypes.DWORD), ("dmDisplayFlags", wintypes.DWORD),
+        ("dmDisplayFrequency", wintypes.DWORD),
+        ("dmICMMethod", wintypes.DWORD), ("dmICMIntent", wintypes.DWORD),
+        ("dmMediaType", wintypes.DWORD), ("dmDitherType", wintypes.DWORD),
+        ("dmReserved1", wintypes.DWORD), ("dmReserved2", wintypes.DWORD),
+        ("dmPanningWidth", wintypes.DWORD), ("dmPanningHeight", wintypes.DWORD),
+    ]
+
+
+class _PHYSICAL_MONITOR(ctypes.Structure):
+    _fields_ = [("hPhysicalMonitor", ctypes.c_void_p),
+                ("szPhysicalMonitorDescription", ctypes.c_wchar * 128)]
+
+
+_MONENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p,
+                                  ctypes.POINTER(_RECT), ctypes.c_void_p)
+
+
+def _ddc_api():
+    """按需加载 dxva2，并声明函数签名（64 位下不声明会截断指针）"""
+    u = ctypes.WinDLL("user32", use_last_error=True)
+    x = ctypes.WinDLL("dxva2", use_last_error=True)
+    u.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_MONITORINFOEXW)]
+    u.GetMonitorInfoW.restype = wintypes.BOOL
+    u.EnumDisplaySettingsW.argtypes = [ctypes.c_wchar_p, wintypes.DWORD,
+                                       ctypes.POINTER(_DEVMODE)]
+    u.EnumDisplaySettingsW.restype = wintypes.BOOL
+    x.GetNumberOfPhysicalMonitorsFromHMONITOR.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD)]
+    x.GetNumberOfPhysicalMonitorsFromHMONITOR.restype = wintypes.BOOL
+    x.GetPhysicalMonitorsFromHMONITOR.argtypes = [
+        ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_PHYSICAL_MONITOR)]
+    x.GetPhysicalMonitorsFromHMONITOR.restype = wintypes.BOOL
+    x.GetMonitorBrightness.argtypes = [ctypes.c_void_p,
+                                       ctypes.POINTER(wintypes.DWORD),
+                                       ctypes.POINTER(wintypes.DWORD),
+                                       ctypes.POINTER(wintypes.DWORD)]
+    x.GetMonitorBrightness.restype = wintypes.BOOL
+    x.SetMonitorBrightness.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    x.SetMonitorBrightness.restype = wintypes.BOOL
+    x.DestroyPhysicalMonitor.argtypes = [ctypes.c_void_p]
+    return u, x
+
+
+def _native_size(user32, device):
+    """这块屏的「原生」分辨率。EnumDisplaySettings(-1) 给的是当前模式，
+    4K 那台被人为降成 2560x1440 时也会报 2560x1440，所以拿它来筛是不可靠的；
+    这里改看最大模式（EnumDisplaySettings 全表里像素最多的那个）。"""
+    dm = _DEVMODE()
+    best = (0, 0)
+    i = 0
+    while i < 512:
+        dm.dmSize = ctypes.sizeof(_DEVMODE)
+        if not user32.EnumDisplaySettingsW(device, i, ctypes.byref(dm)):
+            break
+        if dm.dmPelsWidth * dm.dmPelsHeight > best[0] * best[1]:
+            best = (dm.dmPelsWidth, dm.dmPelsHeight)
+        i += 1
+    return best
+
+
+def find_brightness_monitor(target=(2560, 1440)):
+    """找出「原生分辨率等于 target 且支持 DDC/CI」的那台显示器。
+    返回 dict(handle, device, size, cur, mn, mx)，找不到返回 None。
+    target=None 表示不按分辨率筛，认第一台支持 DDC/CI 的。
+    调用方用完必须调 close_brightness_monitor() 释放句柄。"""
+    if target is None:
+        return None
+    try:
+        user32, dxva2 = _ddc_api()
+    except Exception:
+        return None
+
+    hits = []
+
+    def cb(hmon, hdc, lprc, data):
+        mi = _MONITORINFOEXW()
+        mi.cbSize = ctypes.sizeof(_MONITORINFOEXW)
+        if not user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+            return 1
+        size = _native_size(user32, mi.szDevice)
+        if size != tuple(target):
+            return 1                      # 不是 2K 那台，连开都不开
+        n = wintypes.DWORD(0)
+        if not (dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(
+                hmon, ctypes.byref(n)) and n.value):
+            return 1
+        arr = (_PHYSICAL_MONITOR * n.value)()
+        if not dxva2.GetPhysicalMonitorsFromHMONITOR(hmon, n.value, arr):
+            return 1
+        for idx, pm in enumerate(arr):
+            if idx:                       # 一块屏挂了多个物理口时只留第一个
+                dxva2.DestroyPhysicalMonitor(pm.hPhysicalMonitor)
+                continue
+            mn, cu, mx = (wintypes.DWORD(0) for _ in range(3))
+            ok = dxva2.GetMonitorBrightness(pm.hPhysicalMonitor,
+                                            ctypes.byref(mn),
+                                            ctypes.byref(cu),
+                                            ctypes.byref(mx))
+            if ok and mx.value > mn.value:
+                hits.append({
+                    "handle": pm.hPhysicalMonitor,
+                    "device": mi.szDevice,
+                    "size": size,
+                    "cur": cu.value, "mn": mn.value, "mx": mx.value,
+                })
+            else:
+                dxva2.DestroyPhysicalMonitor(pm.hPhysicalMonitor)
+        return 1
+
+    try:
+        user32.EnumDisplayMonitors(None, None, _MONENUMPROC(cb), None)
+    except Exception:
+        return None
+    return hits[0] if hits else None
+
+
+def close_brightness_monitor(mon):
+    if not mon:
+        return
+    try:
+        dxva2 = ctypes.WinDLL("dxva2")
+        dxva2.DestroyPhysicalMonitor.argtypes = [ctypes.c_void_p]
+        dxva2.DestroyPhysicalMonitor(mon["handle"])
+    except Exception:
+        pass
+
+
+def brightness_percent(mon, fresh=False):
+    """句柄里的当前亮度换算成 0..100。DDC 的原始值范围不一定是 0..100
+    （有些屏是 0..255），所以统一按 mn..mx 归一化，别把原始值当百分比。
+
+    fresh=True 时重新向显示器要一次值（一次 60ms 上下），并把 mon["cur"]
+    更新成刚读到的原始值；否则直接用缓存。缓存只在 set_brightness 成功后
+    和 fresh 读取时更新 —— 拿发现显示器那一刻的值当"当前亮度"是错的，
+    用户按显示器实体键或别的软件改过之后就会一直显示旧值。"""
+    if not mon:
+        return None
+    if fresh:
+        try:
+            dxva2 = ctypes.WinDLL("dxva2")
+            dxva2.GetMonitorBrightness.argtypes = [ctypes.c_void_p] + [
+                ctypes.POINTER(wintypes.DWORD)] * 3
+            dxva2.GetMonitorBrightness.restype = wintypes.BOOL
+            mn, cu, mx = (wintypes.DWORD(0) for _ in range(3))
+            if dxva2.GetMonitorBrightness(mon["handle"], ctypes.byref(mn),
+                                           ctypes.byref(cu), ctypes.byref(mx)):
+                if mx.value > mn.value:
+                    mon["mn"], mon["cur"], mon["mx"] = mn.value, cu.value, mx.value
+                else:
+                    mon["cur"] = cu.value
+        except Exception:
+            return None
+    span = max(1, mon["mx"] - mon["mn"])
+    return int(round((mon["cur"] - mon["mn"]) * 100.0 / span))
+
+
+def set_brightness(mon, percent):
+    """percent 0..100 -> DDC 原始值。返回 True/False。"""
+    if not mon:
+        return False
+    percent = max(0, min(100, int(percent)))
+    span = mon["mx"] - mon["mn"]
+    raw = mon["mn"] + int(round(span * percent / 100.0))
+    try:
+        dxva2 = ctypes.WinDLL("dxva2")
+        dxva2.SetMonitorBrightness.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        dxva2.SetMonitorBrightness.restype = wintypes.BOOL
+        if dxva2.SetMonitorBrightness(mon["handle"], raw):
+            mon["cur"] = raw       # 写成功了就把缓存对齐，省一次回读
+            return True
+        return False
+    except Exception:
+        return False
+
+
+# ==================== 亮度线程 ====================
+class Brightness(threading.Thread):
+    """DDC/CI 读写一次要 60ms 上下，放在主线程里拖滑杆会卡住界面，
+    所以单独一条线程：拖动时只保留「最后一次」的意图，不排长队。"""
+
+    def __init__(self, out_queue):
+        super().__init__(daemon=True)
+        self.q = out_queue
+        self.stop_flag = False
+        self._lock = threading.Lock()
+        self._want = None
+        self.mon = None
+
+    def set(self, pct):
+        with self._lock:
+            self._want = max(0, min(100, int(pct)))
+
+    def _take(self):
+        with self._lock:
+            w, self._want = self._want, None
+            return w
+
+    def _peek(self):
+        with self._lock:
+            return self._want
+
+    def run(self):
+        mon = find_brightness_monitor()
+        if not mon:
+            self.q.put({"bright": None})
+            return
+        self.mon = mon
+        last = None
+        while not self.stop_flag:
+            want = self._take()
+            if want is not None:
+                ok = set_brightness(mon, want)
+                cur = want if ok else brightness_percent(mon, fresh=True)
+                # 写太快会把 I2C 压满，留一点间隔
+                time.sleep(0.08)
+            else:
+                cur = brightness_percent(mon, fresh=True)
+                # 没人动滑杆就慢慢回读：用户按显示器上的实体按键改了也能跟上
+                for _ in range(30):
+                    if self.stop_flag or self._peek() is not None:
+                        break
+                    time.sleep(0.1)
+                if self._peek() is not None:
+                    continue
+            if cur is not None and cur != last:
+                last = cur
+                self.q.put({"bright": cur})
 
 
 # ==================== 托盘图标 ====================
@@ -383,10 +646,51 @@ def build_image(data, hover=None, k=None):
     gauge(236, 246, "内存", float(data.get("mem") or 0),
           f"{used:.0f}/{total:.0f}G" if total else "")
 
+    d.line([(px(18), px(262)), (pw - px(18), px(262))],
+           fill=CLR["divider"], width=lw)
+
+    # ---------- 显示器亮度（只控制 2K 那台） ----------
+    # 4K 那台对 DDC/CI 不响应，也不该被控制，所以这里只有一个滑杆、没有选择器。
+    bri = data.get("bright")
+    bl = data.get("bright_label") or "亮度"
+    # 滑杆的点击/拖动热区比可见轨道高，免得要点准那 7px 细条
+    slider = (18, 284, W - 18, 302)
+    if bri is None:
+        d.text((px(18), px(276)), bl, font=F["label"], fill=CLR["fg_faint"],
+               anchor="lm")
+        d.text((pw - px(18), px(276)), "不可用", font=F["sub"],
+               fill=CLR["fg_faint"], anchor="rm")
+        d.text((px(18), px(293)), "这台显示器没响应 DDC/CI",
+               font=F["sub"], fill=CLR["fg_faint"], anchor="lm")
+    else:
+        pct = max(0, min(100, int(bri)))
+        d.text((px(18), px(278)), bl, font=F["label"], fill=CLR["fg_dim"],
+               anchor="lm")
+        d.text((pw - px(18), px(278)), f"{pct}%", font=F["value"],
+               fill=CLR["fg"], anchor="rm")
+        x1, x2 = px(18), pw - px(18)
+        yb = px(292)
+        bh = max(3, P(7))
+        d.rounded_rectangle([x1, yb, x2, yb + bh], radius=bh / 2,
+                            fill=CLR["track"])
+        # 亮度用暖黄，和 CPU/内存的红黄绿区分开：它不是"负载"，没有好坏之分
+        warm = (255, 198, 92)
+        fw = (x2 - x1) * pct / 100.0
+        if fw > 1:
+            d.rounded_rectangle([x1, yb, x1 + max(fw, bh), yb + bh],
+                                radius=bh / 2, fill=warm)
+        # 滑杆把手：小圆点，让"这里能拖"比一条纯色进度条更明显
+        # 两端要留出半径，否则 0% / 100% 时圆点会被裁掉半个
+        kr = P(6.5)
+        kx = x1 + max(fw, bh * 0.5)
+        kx = min(max(kx, x1 + kr), x2 - kr)
+        d.ellipse([kx - kr, yb + bh / 2 - kr, kx + kr, yb + bh / 2 + kr],
+                  fill=CLR["fg"])
+
     # ---------- 按钮 ----------
     buttons = {}
     bw = (W - 36 - 10) // 2
-    by1, by2 = 272, 310
+    by1, by2 = 314, 352
     specs = [(18, "挂机", MODE_IDLE, CLR["accent"]),
              (18 + bw + 10, "恢复", MODE_NORMAL, CLR["ok"])]
     for bx, text, guid, color in specs:
@@ -410,7 +714,7 @@ def build_image(data, hover=None, k=None):
                fill=tc, anchor="mm")
         buttons[guid] = (bx, by1, bx + bw, by2)
 
-    return base, buttons
+    return base, buttons, (slider if bri is not None else None)
 
 
 # ==================== 采集线程 ====================
@@ -487,8 +791,12 @@ class Widget:
                     for n, p in SERVICES],
             "caddy": {"live": [], "ms": None, "state": "down"},
             "scheme": active_scheme(),
+            "bright": None,
+            "bright_label": "亮度",
         }
         self.buttons = {}
+        self.slider = None
+        self._slide = False
         self._drag = None
         self._moved = False
         self._hover = None
@@ -498,9 +806,12 @@ class Widget:
         self._tray_sig = None
 
         self.queue = queue.Queue()
+        self.bqueue = queue.Queue()     # 亮度线程 -> 主线程
         self.cmdq = queue.Queue()       # 托盘线程 -> 主线程的动作队列
         self.sampler = Sampler(self.queue)
         self.sampler.start()
+        self.bright = Brightness(self.bqueue)
+        self.bright.start()
 
         self._load_pos()
         self._bind()
@@ -558,6 +869,16 @@ class Widget:
                 return guid
         return None
 
+    def _on_slider(self, e):
+        """返回鼠标位置对应的亮度百分比；不在滑杆热区内返回 None"""
+        if not self.slider:
+            return None
+        lx, ly = e.x / SCALE, e.y / SCALE
+        x1, y1, x2, y2 = self.slider
+        if not (y1 <= ly <= y2):
+            return None
+        return max(0, min(100, round((lx - x1) * 100.0 / max(1, x2 - x1))))
+
     def _on_motion(self, e):
         hv = self._hit(e)
         if hv != self._hover:
@@ -570,11 +891,24 @@ class Widget:
             self._draw()
 
     def _on_press(self, e):
+        pct = self._on_slider(e)
+        if pct is not None:
+            # 滑杆优先：按在滑杆上是要调亮度，不是要拖窗口
+            self._slide = True
+            self._drag = None
+            self._apply_bright(pct)
+            return
+        self._slide = False
         self._drag = (e.x_root - self.root.winfo_x(),
                       e.y_root - self.root.winfo_y())
         self._moved = False
 
     def _on_drag(self, e):
+        if self._slide:
+            pct = self._on_slider(e)
+            if pct is not None:
+                self._apply_bright(pct)
+            return
         if not self._drag:
             return
         nx, ny = e.x_root - self._drag[0], e.y_root - self._drag[1]
@@ -583,12 +917,24 @@ class Widget:
         self.root.geometry(f"+{nx}+{ny}")
 
     def _on_release(self, e):
+        if self._slide:
+            self._slide = False
+            return
         if self._moved:
             self._save_conf()
             return
         guid = self._hit(e)
         if guid:
             self._switch(guid)
+
+    def _apply_bright(self, pct):
+        """界面先跟着手走，真正写显示器交给亮度线程（每次 60ms）"""
+        self.data["bright"] = pct
+        self._draw()
+        try:
+            self.bright.set(pct)
+        except Exception:
+            pass
 
     def _on_menu(self, e):
         m = tk.Menu(self.root, tearoff=0)
@@ -639,7 +985,15 @@ class Widget:
         got = False
         while True:
             try:
-                self.data = self.queue.get_nowait()
+                # 采集线程只给 CPU/内存/服务那几项，亮度由亮度线程单独维护，
+                # 所以这里是合并而不是整体替换，否则每轮都会把亮度冲掉
+                self.data.update(self.queue.get_nowait())
+                got = True
+            except queue.Empty:
+                break
+        while True:
+            try:
+                self.data.update(self.bqueue.get_nowait())
                 got = True
             except queue.Empty:
                 break
@@ -724,6 +1078,16 @@ class Widget:
                 MenuItem(lambda item: self._svc_line(0), None, enabled=False),
                 MenuItem(lambda item: self._svc_line(1), None, enabled=False),
                 Menu.SEPARATOR,
+                MenuItem(lambda item: self._bright_line(), None, enabled=False),
+                MenuItem("亮度 30%", lambda icon, item: self._post(
+                    lambda: self._apply_bright(30))),
+                MenuItem("亮度 50%", lambda icon, item: self._post(
+                    lambda: self._apply_bright(50))),
+                MenuItem("亮度 70%", lambda icon, item: self._post(
+                    lambda: self._apply_bright(70))),
+                MenuItem("亮度 100%", lambda icon, item: self._post(
+                    lambda: self._apply_bright(100))),
+                Menu.SEPARATOR,
                 MenuItem("始终置顶", self._on_tray_top,
                          checked=lambda item: self.topmost),
                 MenuItem("切换到 挂机", lambda icon, item: self._post(
@@ -770,6 +1134,12 @@ class Widget:
             return "%s  %s" % (s["name"], "运行中" if s.get("up") else "未响应")
         return "—"
 
+    def _bright_line(self):
+        b = self.data.get("bright")
+        if b is None:
+            return "亮度  不可用"
+        return "亮度  %d%%（2K 屏）" % int(b)
+
     def _on_tray_vis(self, icon=None, item=None):
         self._post(self._toggle_vis)
 
@@ -804,8 +1174,9 @@ class Widget:
             pass
 
     def _draw(self):
-        img, buttons = build_image(self.data, self._hover)
+        img, buttons, slider = build_image(self.data, self._hover)
         self.buttons = buttons
+        self.slider = slider
         if (img.width, img.height) != (self.pw, self.ph):
             img = img.resize((self.pw, self.ph), Image.LANCZOS)
         self._photo = ImageTk.PhotoImage(img)
@@ -813,6 +1184,12 @@ class Widget:
 
     def quit(self):
         self.sampler.stop_flag = True
+        self.bright.stop_flag = True
+        if self.bright.mon:
+            try:
+                close_brightness_monitor(self.bright.mon)
+            except Exception:
+                pass
         if self.tray:
             try:
                 self.tray.stop()
@@ -843,6 +1220,8 @@ def preview(k=2.0):
                   else "warn" if live else "down"),
     }
     vm = psutil.virtual_memory()
+    # 预览不真去读写显示器（DDC/CI 一次 60ms，且会改到用户当前的亮度），
+    # 用一个假值把滑杆画出来就行
     data = {
         "cpu": psutil.cpu_percent(interval=0.3),
         "mem": vm.percent,
@@ -851,10 +1230,12 @@ def preview(k=2.0):
         "svc": svc,
         "caddy": caddy,
         "scheme": scheme,
+        "bright": 70,
+        "bright_label": "亮度",
     }
 
     def compose(dat, bg_top, bg_bot, out_name):
-        img, _ = build_image(dat, k=k)
+        img, _, _ = build_image(dat, k=k)
         pad = 30
         cw, ch = img.width + pad * 2, img.height + pad * 2
         canvas = Image.new("RGB", (cw, ch), bg_top)
